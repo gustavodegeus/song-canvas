@@ -1,0 +1,21 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+.DS_Store
+public/ffmpeg/
+.env
+.env.*
+!.env.example
+# Local credentials and private keys must never be published.
+*.pem
+*.key
+client_secret*.json
+credentials*.json
+# Keep real songs and rendered videos out; retain only the generated test tone.
+*.mp3
+*.mp4
+*.wav
+*.m4a
+*.aac
+!tests/fixtures/tone.mp3

@@ -1,0 +1,28 @@
+Song Canvas — third-party software
+
+The video engine is the unmodified @ffmpeg/core 0.12.10 single-threaded
+WebAssembly distribution, used through @ffmpeg/ffmpeg 0.12.15 (MIT wrapper).
+It contains FFmpeg 5.1.4 and GPL-enabled codecs including libx264/libx265.
+The core is licensed GPL-2.0-or-later, not merely the wrapper's MIT license.
+Copyright belongs to the respective FFmpeg and codec authors.
+
+GPLv2 license text: ./ffmpeg-GPL-2.0.txt
+Upstream source, dependencies, and build recipes:
+https://github.com/ffmpegwasm/ffmpeg.wasm
+Pinned upstream source snapshot (core package version 0.12.10):
+https://github.com/ffmpegwasm/ffmpeg.wasm/tree/f876f907c7e9b9bf51d4ed0b913a855a63ae63fc
+FFmpeg 5.1.4 source:
+https://ffmpeg.org/releases/ffmpeg-5.1.4.tar.xz
+Build recipe, codec source versions, and patches are in the upstream Dockerfile,
+build/, and src/ directories. Distributors must comply with the applicable
+licenses, including providing corresponding source and dependency build inputs;
+these links are not a substitute for verifying those obligations before release.
+
+The bundled Allura handwriting font is Copyright (c) its font authors and is
+licensed under the SIL Open Font License. See ./allura-OFL.txt.
+
+React and React DOM are Copyright (c) Meta Platforms, Inc. and affiliates (MIT).
+The @ffmpeg/ffmpeg wrapper is Copyright (c) ffmpeg.wasm contributors (MIT).
+MIT license texts are included alongside this file by the build preparation step.
+
+This software is provided without warranty. See the respective licenses.
