@@ -5,7 +5,8 @@ A small, warm music studio in your browser. Turn an MP3 into notebook artwork an
 ## What works
 
 - MP3 selection or drag-and-drop; editable filename-derived title with explicit confirmation.
-- Eight original, bundled SVG themes: hearts, drums, mountains, balanced stones, broken chains, beach/palms, traveler/road, and Bahia architecture.
+- 24 original, bundled SVG themes in a shared warm-ink style, including soccer, hearts, drums, mountains, stones, chains, beach, traveler, Bahia architecture, moon, birds, flowers, roots, rain, butterfly, compass, sailboat, coffee, dancing, friendship, home, guitar, vinyl, and lighthouse.
+- Compact illustration picker with English/Portuguese, case/accent-insensitive search, category filters, and a scrollable “Explore all” library. Filtering never replaces your selected illustration.
 - Handwritten lettering, red underline, measured wrapping, Portuguese accents, and perspective alignment on the supplied notebook.
 - Immutable 1920 × 1080 background with pixel-level tests outside the notebook edit mask.
 - Local PNG download and **real FFmpeg.wasm H.264/AAC MP4 encoding** with progress, cancellation, retry, output inspection, video review, and downloads.
@@ -30,6 +31,8 @@ npm test
 npx playwright install chromium
 npm run test:browser
 npm run test:production
+# Optional: slower benchmark, not part of CI
+npm run benchmark:video
 ```
 
 The production smoke test serves the built app at `/song-canvas/` without COOP/COEP headers and performs an actual encode/download. Browser tests use a separate development server on port 5174 and mock Google; they never publish videos. Screenshots are generated under `test-results/` (gitignored). A generated two-second test tone is included under `tests/fixtures/`.
@@ -45,7 +48,7 @@ The production smoke test serves the built app at `/song-canvas/` without COOP/C
 
 No API key is needed for these authenticated uploads. Tokens and upload sessions stay in memory; they are not in localStorage, URLs, the repository, or an app database. Reloading/closing the tab loses the session. On an interrupted upload, retry **in the same tab** to resume from YouTube's confirmed offset; settings are locked once a session exists. A 401 prompts reconnection on the next upload click. Use the same account to resume.
 
-Defaults: song title as video title, no description, music category, public requested, and not made for kids visibly selected by default. The user confirms the audience/rights before publishing. YouTube title restrictions are validated without silently changing the title.
+Defaults: song title as the initial YouTube title, no description, music category, public requested, and not made for kids visibly selected by default. On the review screen, edit **YouTube video title** to add artist names, genre, or other details (for example, `My Love | Música Autoral | Artist Name`). This metadata is separate from the song title: it does not change the artwork, audio, rendered MP4, or download filenames, and requires no re-encoding. A character counter and inline validation enforce YouTube's 1–100-character/no-angle-brackets rules. Changing the listing title resets the final review confirmation. It is locked once an upload session begins so resumable retries use identical metadata. The user confirms the audience/rights before publishing.
 
 **External setup remains necessary:** Google OAuth verification and a separate YouTube API compliance audit may be required for public use. Unaudited API projects may be restricted to private uploads. The UI reports actual returned visibility, not merely what was requested. Upload acceptance is not processing completion: the app provides a video link and YouTube Studio link, not a claim that a video is already publicly playable. This version does not poll processing status or manage/delete videos.
 
@@ -65,9 +68,11 @@ To preview from a phone on your LAN, run `npm run dev -- --host 0.0.0.0`; use HT
 ## Files and architecture
 
 - `src/App.tsx`: workflow and approachable responsive UI.
-- `src/artwork/`: canonical geometry, transparent ink layout, inverse projective warp, and bundled SVG motifs.
+- `src/artwork/`: canonical geometry, transparent ink layout, inverse projective warp, bundled SVG motifs, and bilingual catalog metadata.
+- `src/DrawingPicker.tsx`: compact search/filter/browse controls, keeping the selected illustration independent of the current results.
 - `src/media/audio.ts`: MP3 validation, metadata, filename handling, and downloads.
-- `src/media/encoder.ts`: a worker and virtual filesystem per job, authoritative FFprobe checks, full-audio encode, output codec/resolution/duration checks, and cleanup.
+- `src/media/encoder.ts`: a worker and virtual filesystem per job, authoritative FFprobe checks, one-time artwork encoding, full-audio assembly, output codec/resolution/duration checks, and cleanup.
+- `src/media/encoding-plan.ts`: bounded, closed-GOP video template and stream-copy assembly commands.
 - `src/youtube/`: Google Identity Services authorization and resumable chunked upload protocol.
 - `scripts/prepare-assets.mjs`: copies the pinned single-thread core and license assets locally at install/dev/build time. Generated core files are not committed.
 - `references/`: original master, approved visual references, and Python prototype; not shipped in the public build.
@@ -75,15 +80,33 @@ To preview from a phone on your LAN, run `npm run dev -- --host 0.0.0.0`; use HT
 
 The CPU warp samples premultiplied-alpha ink, not a paper-colored rectangle, and preserves untouched pixels exactly. Pixel identity applies to the **PNG** outside the editable mask relative to the resized canonical master—not to the smaller original or lossy H.264 frames.
 
-Encoding: 1920 × 1080, 24 fps, libx264, ultrafast/still-image tuning, CRF 22, yuv420p, AAC 256 kbps, explicit audio mapping, shortest-stream termination, and MP4 fast-start. Output audio duration is checked against the MP3 with an encoder-padding tolerance. No speed changes, fades, remastering, or intentional trimming. MP3-to-AAC re-encodes the compressed audio; it cannot preserve original MP3 bytes.
+Encoding: 1920 × 1080, 24 fps, libx264 veryfast/still-image tuning, CRF 22, yuv420p, AAC 256 kbps, explicit audio mapping, shortest-stream termination, and MP4 fast-start. At most two seconds of artwork are encoded once as a closed GOP with no B-frames. FFmpeg loops that MP4 with continuous timestamps and copies the H.264 packets while encoding the complete MP3 to AAC once. This avoids decoding/resizing/compressing identical 1080p frames for the full song.
+
+Output codecs, resolution, frame rate, audio duration, and video coverage are checked before a download/upload becomes available. No speed changes, fades, remastering, or intentional trimming. MP3-to-AAC re-encodes the compressed audio; it cannot preserve original MP3 bytes.
+
+## Conversion performance
+
+On the development machine in Chromium, using synthetic audio and the same PNG:
+
+| Sample | Previous encoder | Static-loop encoder |
+| --- | --- | --- |
+| 20.37 seconds | 43.7 seconds | 5.8 seconds (~7.5× faster) |
+| 3:36 | Not measured in this comparison | 14.6 seconds through the production encoder |
+| 10:00 | Not measured in this comparison | 30.5 seconds for encode/assembly |
+
+These are measurements, not promises for every device or real music file. The paired 20.37-second comparison and ten-minute run exclude engine loading and fixture generation; the 3:36 production measurement includes a fresh worker, cached-core loading, and format/timing checks. Cold network downloads, CPU speed, audio complexity, browser throttling, and memory can change results.
+
+`npm run benchmark:video` reproduces the warm-core paired comparison and a 216.37-second optimized sample; set `LONG_BENCHMARK_SECONDS=600` for ten minutes. Results are written to gitignored `test-results/video-benchmark.json`. This opt-in benchmark is excluded from normal CI because the legacy encoder is deliberately slow. No real songs or Google uploads are involved.
+
+Regular tests check frame timestamps across loop boundaries, matching decoded frames at loop restarts, and byte-identical AAC packets versus a standalone full-audio encode, including a distinct ending on a partial final loop.
 
 ## Limits and remaining validation
 
 - Maximum song duration: 10 minutes; maximum input size: 80 MB. Browser and FFprobe both check the input. The size limit is a memory safeguard, not a promised browser capacity.
-- Real two-second 1080p encoding/playback/download and cancellation/retry are tested in Chromium. **Ten-minute real-song benchmarks and physical iOS/Android, Safari, and Firefox tests are still pending.** Longer songs may take substantial time or exhaust memory, particularly on mobile. Desktop is recommended.
+- Real 1080p encoding/playback/download and cancellation/retry are tested in Chromium, including multi-loop audio continuity and synthetic samples up to ten minutes. **Ten-minute real-music benchmarks and physical iOS/Android, Safari, and Firefox tests are still pending.** Longer songs can still exhaust memory, particularly on mobile. Desktop is recommended.
 - Keep the tab open while creating/uploading. Backgrounding a mobile browser may suspend it. Do not promise background work after closing the app.
 - Resumable sessions retry transient failures with backoff. They are not persisted across reloads. Never silently create a new upload after an ambiguous final response; check YouTube Studio to avoid duplicates.
-- The newly added six illustrations follow the approved direction but still deserve your visual review.
+- The 16 additional illustrations follow the original warm-ink direction; a contact-sheet visual review and automated short/wrapped-title rendering checks cover all 24. Review your selected drawing in the notebook preview before sharing.
 
 ## Licenses and release checks
 

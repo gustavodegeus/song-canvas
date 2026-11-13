@@ -1,6 +1,7 @@
 // Original, bundled transparent SVG illustrations in a shared warm-ink palette.
 // No user input is interpolated into this markup.
-const wrap = (content: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 360"><g stroke="#48291c" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none">${content}</g></svg>`;
+import { wrap } from './illustration';
+import { extraMotifs } from './extra-motifs';
 
 export const motifs = {
   heart: {
@@ -101,5 +102,6 @@ export const motifs = {
       <path stroke-width="1.6" d="M117 296C223 287 382 302 484 294M167 309L245 307M350 310L423 308M225 85L229 100M390 104L398 118"/>
     `),
   },
+  ...extraMotifs,
 } as const;
 export type Motif = keyof typeof motifs;

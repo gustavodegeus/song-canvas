@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { motifs, type Motif } from './artwork/motifs';
+import DrawingPicker from './DrawingPicker';
 import { pngBlob, renderArtwork } from './artwork/renderer';
 import { downloadBlob, formatDuration, inferTitle, inspectAudio, safeFilename } from './media/audio';
 import type { RenderProgress } from './media/encoder';
 import { authorize, clearAuthorization, youtubeConfigured } from './youtube/auth';
-import { uploadVideo, validateMetadata, type UploadResult, type UploadSession, type Visibility } from './youtube/upload';
+import { uploadVideo, validateMetadata, videoTitleError, type UploadResult, type UploadSession, type Visibility } from './youtube/upload';
 
 type Busy = 'reading' | 'encoding' | 'uploading' | undefined;
 interface Artwork { canvas: HTMLCanvasElement; title: string; motif: Motif }
@@ -22,6 +23,8 @@ export default function App() {
   const [artError, setArtError] = useState('');
   const [artLoading, setArtLoading] = useState(true);
   const [video, setVideo] = useState<Video>();
+  // Listing metadata is independent of the artwork title and rendered media.
+  const [youtubeTitle, setYoutubeTitle] = useState('');
   const [busy, setBusy] = useState<Busy>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -80,6 +83,7 @@ export default function App() {
   useEffect(() => () => active.current?.abort(), []);
 
   const artworkReady = art && !artLoading && art.title === title.trim() && art.motif === motif && !artError;
+  const listingTitleError = video ? videoTitleError(youtubeTitle) : undefined;
   const resetResult = () => { setSession(undefined); setPublished(undefined); setReviewed(false); setError(''); setNotice(''); };
   const begin = (kind: Busy) => {
     if (lock.current) return;
@@ -122,6 +126,7 @@ export default function App() {
       const blob = await encodeVideo(song.file, png, controller.signal, setProgress);
       controller.signal.throwIfAborted();
       resetResult();
+      setYoutubeTitle(art.title);
       setVideo({ blob, url: URL.createObjectURL(blob), png, title: art.title, duration: song.duration });
     } catch (error) {
       if (cancelled(error)) setNotice('Video creation cancelled. Your song and artwork are still here.');
@@ -133,11 +138,12 @@ export default function App() {
     const controller = begin('uploading');
     if (!controller) return;
     try {
-      validateMetadata({ title: video.title, visibility, madeForKids });
+      const metadata = { title: youtubeTitle, visibility, madeForKids };
+      validateMetadata(metadata);
       setProgress({ stage: 'Connecting to your YouTube channel…' });
       const token = await authorize(controller.signal);
       setProgress({ stage: session ? 'Checking your upload so we can resume…' : 'Sending your video to YouTube…', fraction: 0 });
-      const result = await uploadVideo(video.blob, { title: video.title, visibility, madeForKids }, token,
+      const result = await uploadVideo(video.blob, metadata, token,
         controller.signal, fraction => setProgress({ stage: 'Sending your video to YouTube…', fraction }), setSession, session);
       setPublished(result);
       setSession(undefined);
@@ -190,20 +196,30 @@ export default function App() {
           <input id="title" value={title} maxLength={160} disabled={Boolean(busy)} onChange={event => { setTitle(event.target.value); setConfirmed(false); setError(''); }} aria-describedby="title-note" />
           <p id="title-note" className="field-note">{song ? 'Taken from your filename. Make it exactly right.' : 'Try a title, or add your MP3 to get started.'}</p>
           {song && <label className="check"><input type="checkbox" checked={confirmed} disabled={Boolean(busy)} onChange={event => setConfirmed(event.target.checked)} />Yes, this is the correct song title.</label>}
-          <fieldset disabled={Boolean(busy)}><legend>Choose a drawing</legend><div className="motifs">{Object.entries(motifs).map(([key, item]) => <label key={key} className="motif"><input type="radio" name="motif" value={key} checked={motif === key} onChange={() => setMotif(key as Motif)} /><span aria-hidden="true" dangerouslySetInnerHTML={{ __html: item.svg }} /><span>{item.label}</span></label>)}</div></fieldset>
+          <DrawingPicker value={motif} onChange={setMotif} disabled={Boolean(busy)} />
           <p id="status" role="status" aria-live="polite">{artError || (artLoading ? 'Writing your song into the scene…' : 'Your artwork is ready. The sunset stays the same.')}</p>
           <button className="primary" type="button" disabled={!song || !confirmed || !artworkReady || Boolean(busy)} onClick={() => void generate()}>Create my video <span aria-hidden="true">↗</span></button>
           {!song && <p className="field-note">Add an MP3 to create your video.</p>}
           <button id="download" className="secondary" type="button" disabled={!artworkReady || Boolean(busy)} onClick={() => void downloadArtwork()}>Download artwork</button>
-          <p className="field-note">Full HD, entirely in your browser. Longer songs may take a while; desktop works best. Keep this tab open.</p>
+          <p className="field-note">Full HD, entirely in your browser. We prepare the artwork once, then add your complete song. Keep this tab open; desktop works best.</p>
         </> : <>
           <p className="eyebrow">Ready when you are</p><h2 ref={reviewHeading} tabIndex={-1}>One last listen.</h2><p className="hint">Happy with how it looks and sounds? Let’s give it an audience.</p>
-          <div className="video-title"><span className="eyebrow">YouTube title</span><strong>{video.title}</strong><p className="field-note">No description will be added.</p></div>
+          <div className="video-title">
+            <label htmlFor="youtube-title">YouTube video title</label>
+            <textarea id="youtube-title" rows={3} value={youtubeTitle} maxLength={200}
+              disabled={Boolean(busy || session || published)}
+              aria-invalid={Boolean(listingTitleError)}
+              aria-describedby={`youtube-title-help youtube-title-count${listingTitleError ? ' youtube-title-error' : ''}`}
+              onChange={event => { setYoutubeTitle(event.target.value); setReviewed(false); setError(''); }} />
+            <p id="youtube-title-help" className="field-note">Add artist names or other details here. This only changes the YouTube listing—not your artwork or video. No description will be added.</p>
+            <p id="youtube-title-count" className="title-count">{[...youtubeTitle].length} / 100 characters</p>
+            {listingTitleError && <p id="youtube-title-error" className="title-error" role="alert">{listingTitleError}</p>}
+          </div>
           {!published && <>
             <label htmlFor="visibility">Who can watch?</label><select id="visibility" value={visibility} disabled={Boolean(busy || session)} onChange={event => { setVisibility(event.target.value as Visibility); setReviewed(false); }}><option value="public">Everyone · Public</option><option value="unlisted">Anyone with the link · Unlisted</option><option value="private">Only you · Private</option></select>
             <label className="check"><input type="checkbox" checked={madeForKids} disabled={Boolean(busy || session)} onChange={event => { setMadeForKids(event.target.checked); setReviewed(false); }} />This video is made for kids.</label><p className="field-note audience-note">Default: not made for kids. Confirm the correct audience for this song; family-friendly is not the same as made for kids.</p>
-            <label className="check review-check"><input type="checkbox" checked={reviewed} disabled={Boolean(busy)} onChange={event => setReviewed(event.target.checked)} />I reviewed the video and audience setting, and I have the rights to share this music and artwork.</label>
-            <button type="button" className="primary" disabled={!reviewed || Boolean(busy) || !youtubeConfigured} onClick={() => void publish()}>{session ? 'Resume YouTube upload' : visibility === 'public' ? 'Publish to YouTube' : 'Upload to YouTube'} <span aria-hidden="true">↗</span></button>
+            <label className="check review-check"><input type="checkbox" checked={reviewed} disabled={Boolean(busy)} onChange={event => setReviewed(event.target.checked)} />I reviewed the video, YouTube title, and audience setting, and I have the rights to share this music and artwork.</label>
+            <button type="button" className="primary" disabled={!reviewed || Boolean(busy) || !youtubeConfigured || Boolean(listingTitleError)} onClick={() => void publish()}>{session ? 'Resume YouTube upload' : visibility === 'public' ? 'Publish to YouTube' : 'Upload to YouTube'} <span aria-hidden="true">↗</span></button>
             {!youtubeConfigured && <p className="config-note">YouTube publishing needs a Google client ID configured for this site. Downloads are ready to use.</p>}
             <p className="field-note">{visibility === 'public' ? 'This requests public publication. YouTube may restrict unaudited apps to private uploads.' : `This will request ${visibility} visibility.`} Google sign-in opens only when you choose to upload.</p>
             {youtubeConfigured && !session && <button type="button" className="text-button" disabled={Boolean(busy)} onClick={() => { clearAuthorization(); setNotice('The next upload will ask you to choose a Google account.'); }}>Choose a different Google account next time</button>}

@@ -1,10 +1,11 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { checkDuration } from './audio';
+import { artworkCommand, assembleCommand, templateFrames, VIDEO_FPS } from './encoding-plan';
 
 export interface RenderProgress { stage: string; fraction?: number }
 interface Probe {
   format?: { duration?: string; format_name?: string };
-  streams?: { codec_type?: string; codec_name?: string; width?: number; height?: number; duration?: string }[];
+  streams?: { codec_type?: string; codec_name?: string; width?: number; height?: number; duration?: string; avg_frame_rate?: string }[];
 }
 
 /** Each job owns its worker and virtual FS. Cancel/retry never reuses a poisoned core. */
@@ -41,21 +42,40 @@ export async function encodeVideo(audio: File, artwork: Blob, signal: AbortSigna
     }
     const duration = Number(input.format?.duration);
     checkDuration(duration);
-    logs = [];
+    const frames = templateFrames(duration);
+    let phase: 'artwork' | 'audio' | 'idle' = 'idle';
+    let lastFraction = 0;
     ffmpeg.on('progress', ({ time }) => {
-      onProgress({ stage: 'Creating your video…', fraction: Math.min(0.98, Math.max(0, time / 1_000_000 / duration)) });
+      if (phase === 'idle') return;
+      const elapsed = Math.max(0, time / 1_000_000);
+      const fraction = phase === 'artwork'
+        ? 0.04 + 0.22 * Math.min(1, elapsed / (frames / VIDEO_FPS))
+        : 0.26 + 0.71 * Math.min(1, elapsed / duration);
+      lastFraction = Math.max(lastFraction, fraction);
+      onProgress({ stage: phase === 'artwork' ? 'Preparing the artwork once…' : 'Adding your complete song…', fraction: lastFraction });
     });
-    onProgress({ stage: 'Creating your video…', fraction: 0 });
-    const code = await ffmpeg.exec([
-      '-hide_banner', '-y', '-loop', '1', '-framerate', '24', '-i', 'artwork.png', '-i', 'audio.mp3',
-      '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage',
-      '-crf', '22', '-pix_fmt', 'yuv420p', '-r', '24', '-c:a', 'aac', '-b:a', '256k',
-      '-shortest', '-movflags', '+faststart', 'video.mp4',
-    ]);
-    if (code !== 0) {
-      if (logs.some(line => /memory|alloc|out of bounds/i.test(line))) throw new Error('Your browser ran out of memory. Try a desktop browser and close other tabs.');
-      throw new Error('The video could not be created. Please retry; for longer songs, use a desktop browser.');
-    }
+    const run = async (args: string[]) => {
+      signal.throwIfAborted();
+      logs = [];
+      const code = await ffmpeg.exec(args);
+      signal.throwIfAborted();
+      if (code !== 0) {
+        if (logs.some(line => /memory|alloc|out of bounds/i.test(line))) throw new Error('Your browser ran out of memory. Try a desktop browser and close other tabs.');
+        throw new Error('The video could not be created. Please retry; for longer songs, use a desktop browser.');
+      }
+    };
+    // Encode at most two seconds of artwork once. Each loop begins with a
+    // keyframe and has no cross-loop references or B-frame timestamp offsets.
+    phase = 'artwork';
+    onProgress({ stage: 'Preparing the artwork once…', fraction: 0.04 });
+    await run(artworkCommand(frames));
+    phase = 'audio';
+    lastFraction = 0.26;
+    onProgress({ stage: 'Adding your complete song…', fraction: 0.26 });
+    // Only audio is encoded here. The H.264 packets are copied with continuous
+    // timestamps; no repeated PNG decoding or full-song 1080p re-encoding.
+    await run(assembleCommand());
+    phase = 'idle';
     onProgress({ stage: 'Checking your finished video…', fraction: 0.99 });
     const output = await probe('video.mp4');
     const video = output.streams?.find(stream => stream.codec_type === 'video');
@@ -64,6 +84,13 @@ export async function encodeVideo(audio: File, artwork: Blob, signal: AbortSigna
       throw new Error('The generated video did not pass its format checks. Please retry.');
     }
     const audioDuration = Number(sound.duration);
+    const videoDuration = Number(video.duration);
+    const [numerator, denominator] = (video.avg_frame_rate ?? '').split('/').map(Number);
+    const fps = numerator / denominator;
+    if (!Number.isFinite(videoDuration) || !Number.isFinite(fps) || Math.abs(fps - VIDEO_FPS) > 0.001
+      || videoDuration < audioDuration - 1 / VIDEO_FPS || videoDuration > audioDuration + 0.25) {
+      throw new Error('The video timing did not pass its completeness check. No video will be published.');
+    }
     // Allow MP3/AAC encoder padding, never a materially shortened performance.
     if (!Number.isFinite(audioDuration) || Math.abs(audioDuration - duration) > 0.25) {
       throw new Error('The audio duration did not pass its completeness check. No video will be published.');

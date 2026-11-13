@@ -12,10 +12,14 @@ export class UploadError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 export function metadataKey(metadata: UploadMetadata) { return JSON.stringify(metadata); }
+export function videoTitleError(title: string): string | undefined {
+  if (!title.trim()) return 'Please enter a YouTube video title.';
+  if ([...title].length > 100) return 'YouTube titles can have up to 100 characters.';
+  if (/[<>]/u.test(title)) return 'YouTube titles cannot include < or >.';
+}
 export function validateMetadata(metadata: UploadMetadata) {
-  if (!metadata.title.trim() || [...metadata.title].length > 100 || /[<>]/u.test(metadata.title)) {
-    throw new Error('YouTube titles must be 1–100 characters and cannot include < or >. Go back to artwork to edit the song title.');
-  }
+  const error = videoTitleError(metadata.title);
+  if (error) throw new Error(error);
 }
 export function metadataBody(metadata: UploadMetadata) {
   return { snippet: { title: metadata.title, categoryId: '10' },
